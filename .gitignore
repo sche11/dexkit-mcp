@@ -1,0 +1,23 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 本地构建产物
+mcp-server/build/
+mcp-server/.gradle/
+*.log
+
+# 临时文件
+*.tmp
+*.bak

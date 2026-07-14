@@ -1,0 +1,15 @@
+diff --git a/dexkit/src/main/cpp/CMakeLists.txt b/dexkit/src/main/cpp/CMakeLists.txt
+--- a/dexkit/src/main/cpp/CMakeLists.txt
++++ b/dexkit/src/main/cpp/CMakeLists.txt
+@@ -38,6 +38,12 @@ if (WIN32)
+                 -static-libgcc
+                 -Wl,-Bstatic,--whole-archive -lwinpthread -Wl,--no-whole-archive
+         )
++    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
++        # LLVM-MinGW: statically link libc++, libc++abi, libunwind, libwinpthread
++        target_link_options(${PROJECT_NAME} PRIVATE
++                -Wl,-Bstatic -lc++ -lc++abi -lunwind -lwinpthread -Wl,-Bdynamic
++        )
+     endif()
+ elseif (APPLE)
+     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS deployment version" FORCE)

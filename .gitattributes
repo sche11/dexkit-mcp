@@ -1,0 +1,18 @@
+# 默认所有文本文件使用 LF 换行（CI 在 Linux 上运行）
+* text=auto eol=lf
+
+# 脚本必须使用 LF
+*.sh text eol=lf
+*.py text eol=lf
+gradlew text eol=lf
+
+# Windows 批处理使用 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件
+*.jar binary
+*.zip binary
+*.dll binary
+*.so binary
+*.dylib binary
