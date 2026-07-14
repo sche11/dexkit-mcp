@@ -70,27 +70,12 @@ python3 "$SCRIPT_DIR/strip-demo-dep.py" \
     "$DEXKIT_ROOT/dexkit-dev/build.gradle"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. 应用 CMakeLists.txt 静态链接补丁
+# 3. 注入 CMakeLists.txt 静态链接选项（LLVM-MinGW Clang on Windows）
+#    使用 Python 脚本替代脆弱的 .patch 文件，对上游行号变化免疫
 # ─────────────────────────────────────────────────────────────────────────────
-log "[3/3] 应用 CMakeLists.txt 静态链接补丁..."
+log "[3/3] 注入 CMakeLists.txt 静态链接选项..."
 
-cd "$DEXKIT_ROOT"
-PATCH_FILE="$REPO_ROOT/patches/cmake-static-link.patch"
-
-if [[ ! -f "$PATCH_FILE" ]]; then
-    log "ERROR: 补丁文件不存在: $PATCH_FILE"
-    exit 1
-fi
-
-# 优先使用 git apply（保留 git 历史），失败则用 patch 命令
-if git apply --check "$PATCH_FILE" 2>/dev/null; then
-    git apply "$PATCH_FILE"
-    log "  补丁已通过 git apply 应用"
-elif patch -p1 --dry-run < "$PATCH_FILE" >/dev/null 2>&1; then
-    patch -p1 < "$PATCH_FILE"
-    log "  补丁已通过 patch 命令应用"
-else
-    log "WARN: 补丁可能已应用或上下文不匹配，跳过"
-fi
+python3 "$SCRIPT_DIR/patch-cmake.py" \
+    "$DEXKIT_ROOT/dexkit/src/main/cpp/CMakeLists.txt"
 
 log "DONE: DexKit 源码已准备就绪"

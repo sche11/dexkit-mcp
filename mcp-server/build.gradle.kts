@@ -42,12 +42,17 @@ sourceSets {
 }
 
 // 显式声明任务依赖：srcDir 是软引用，Gradle 不会自动建立任务依赖
-// 必须确保 :dexkit-dev:copyLibrary 在 jar/shadowJar 之前运行，否则 native 库目录为空
+// 必须确保 :dexkit-dev:copyLibrary 在 processResources 之前运行
+// processResources 是读取 srcDir 并复制到 build/resources/main/ 的任务
+// 如果 copyLibrary 没在 processResources 之前完成，native 库目录为空，jar 内不会包含 native 库
 val copyNativeLib = tasks.register("copyNativeLib") {
     dependsOn(gradle.includedBuilds.first().task(":dexkit-dev:copyLibrary"))
 }
 
 tasks {
+    processResources {
+        dependsOn(copyNativeLib)
+    }
     jar {
         dependsOn(copyNativeLib)
         manifest {
