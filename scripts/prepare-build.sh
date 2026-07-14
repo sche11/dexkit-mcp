@@ -60,11 +60,14 @@ EOF
 log "  settings.gradle 已写入"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. 移除 dexkit-dev/build.gradle 对 :demo 的依赖
+# 2. 移除 dexkit/ 与 dexkit-dev/ 的 build.gradle 对 :demo 的依赖
+#    （两个模块都有 copyReleaseDemo task 和 evaluationDependsOn(":demo")）
 # ─────────────────────────────────────────────────────────────────────────────
-log "[2/3] 移除 dexkit-dev/build.gradle 中的 :demo 依赖..."
+log "[2/3] 移除 dexkit/ 和 dexkit-dev/ 中的 :demo 依赖..."
 
-python3 "$SCRIPT_DIR/strip-demo-dep.py" "$DEXKIT_ROOT/dexkit-dev/build.gradle"
+python3 "$SCRIPT_DIR/strip-demo-dep.py" \
+    "$DEXKIT_ROOT/dexkit/build.gradle" \
+    "$DEXKIT_ROOT/dexkit-dev/build.gradle"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. 应用 CMakeLists.txt 静态链接补丁
