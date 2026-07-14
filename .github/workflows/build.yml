@@ -105,6 +105,8 @@ jobs:
                 "$CLANG_PREFIX/x86_64-w64-mingw32/lib/libzlib.dll.a"
           echo "=== 验证 libz.a 已安装 ==="
           ls -la "$CLANG_PREFIX/x86_64-w64-mingw32/lib/libz.a"
+          # 设置 LIBRARY_PATH，让后续 Gradle/cmake 构建的链接器能找到 libz.a
+          echo "LIBRARY_PATH=$CLANG_PREFIX/x86_64-w64-mingw32/lib" >> $GITHUB_ENV
 
       # ─── Linux: cmake + ninja + zlib-dev ───────────────────────────────────
       - name: Install build deps (Linux)
