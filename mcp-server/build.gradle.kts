@@ -5,7 +5,8 @@ plugins {
 }
 
 group = "org.luckypray.dexkit"
-version = "0.1.0"
+// 版本号优先从环境变量读取（CI 注入上游 DexKit 版本），本地默认 0.1.0
+version = System.getenv("JAR_VERSION") ?: "0.1.0"
 
 application {
     mainClass.set("org.luckypray.dexkit.mcp.MainKt")
@@ -63,7 +64,8 @@ tasks {
         dependsOn(copyNativeLib)
         archiveBaseName.set("dexkit-mcp-server")
         archiveClassifier.set("")
-        archiveVersion.set("0.1.0")
+        // shadow jar 版本号同步使用环境变量，使产物名包含上游版本（如 dexkit-mcp-server-2.2.0.jar）
+        archiveVersion.set(System.getenv("JAR_VERSION") ?: "0.1.0")
         mergeServiceFiles()
         // 重定向 native 库到 jar 内 /native/<platform-tag>/ 路径
         // 只处理 native 库文件（.dll/.so/.dylib），跳过 kotlin_module 等其他资源
