@@ -41,24 +41,33 @@ sourceSets {
     }
 }
 
+// 显式声明任务依赖：srcDir 是软引用，Gradle 不会自动建立任务依赖
+// 必须确保 :dexkit-dev:copyLibrary 在 jar/shadowJar 之前运行，否则 native 库目录为空
+val copyNativeLib = tasks.register("copyNativeLib") {
+    dependsOn(gradle.includedBuilds.first().task(":dexkit-dev:copyLibrary"))
+}
+
 tasks {
     jar {
+        dependsOn(copyNativeLib)
         manifest {
             attributes["Main-Class"] = "org.luckypray.dexkit.mcp.MainKt"
         }
     }
     shadowJar {
+        dependsOn(copyNativeLib)
         archiveBaseName.set("dexkit-mcp-server")
         archiveClassifier.set("")
         archiveVersion.set("0.1.0")
         mergeServiceFiles()
         // 重定向 native 库到 jar 内 /native/<platform-tag>/ 路径
+        // 只处理 native 库文件（.dll/.so/.dylib），跳过 kotlin_module 等其他资源
         // 三级优先级：
         //   1) CI 环境 NATIVE_PLATFORM_TAG 指定（如 windows-x86_64 / linux-arm64）
         //   2) 源文件位于 <os>-<arch>/ 子目录（多平台合并布局）
         //   3) 按扩展名推断 OS（旧版扁平布局回退）
         eachFile {
-            if (!name.startsWith("libdexkit") && !name.startsWith("dexkit")) return@eachFile
+            if (!name.endsWith(".dll") && !name.endsWith(".so") && !name.endsWith(".dylib")) return@eachFile
             val envTag = System.getenv("NATIVE_PLATFORM_TAG")
             if (envTag != null && envTag.matches(Regex("^(windows|linux|macos)-(x86_64|arm64)$"))) {
                 path = "native/$envTag/$name"

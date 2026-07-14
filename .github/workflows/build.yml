@@ -81,7 +81,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          ZLIB_URL="https://zlib.net/zlib-1.3.1.tar.gz"
+          # zlib.net 偶尔返回 HTML 重定向页，改用 GitHub mirror 确保稳定
+          ZLIB_URL="https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
           curl -L --retry 3 -o zlib.tar.gz "$ZLIB_URL"
           tar xzf zlib.tar.gz
           cd zlib-1.3.1
@@ -113,14 +114,24 @@ jobs:
           chmod +x ./gradlew
           ./gradlew shadowJar --no-daemon --stacktrace
 
+      - name: Diagnose native library location
+        shell: bash
+        run: |
+          echo "=== dexkit-dev/build/library/ ==="
+          ls -laR DexKit/dexkit-dev/build/library/ 2>/dev/null || echo "(目录不存在)"
+          echo "=== dexkit-dev/build/cmake/ (native 构建产物) ==="
+          find DexKit/dexkit-dev/build/cmake/ -name "*.dll" -o -name "*.so" -o -name "*.dylib" 2>/dev/null || true
+
       - name: Verify native lib in jar
         shell: bash
         working-directory: DexKit/mcp-server/build/libs
         run: |
           JAR_FILE=$(ls dexkit-mcp-server-*.jar | head -1)
           echo "Inspecting $JAR_FILE"
-          # 列出 jar 内 native 资源
-          unzip -l "$JAR_FILE" | grep -E "native/.*\.(dll|so|dylib)" || true
+          echo "=== jar 内 native/ 路径 ==="
+          unzip -l "$JAR_FILE" | grep -E "native/.*\.(dll|so|dylib)" || echo "WARNING: 未找到 native 库!"
+          echo "=== jar 内所有 .dll/.so/.dylib ==="
+          unzip -l "$JAR_FILE" | grep -E "\.(dll|so|dylib)$" || echo "WARNING: jar 内无任何 native 库!"
 
       - name: Rename jar with platform tag
         shell: bash
