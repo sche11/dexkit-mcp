@@ -88,18 +88,21 @@ jobs:
           cd zlib-1.3.1
           mkdir build && cd build
           # 使用完整路径到 LLVM-MinGW 的 clang，避免 cmake 找到 MSVC 的 clang
-          # ZLIB_COMPAT=ON 让 zlib 生成标准命名的 libz.a（而非 libzlibstatic.a）
           CLANG_PREFIX="/c/llvm-mingw/llvm-mingw"
           cmake -G Ninja \
             -DCMAKE_C_COMPILER="$CLANG_PREFIX/bin/clang.exe" \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
-            -DZLIB_COMPAT=ON \
             -DCMAKE_INSTALL_PREFIX="$CLANG_PREFIX/x86_64-w64-mingw32" \
             ..
           ninja install
-          # 删除动态导入库 libz.dll.a，强制链接器使用静态 libz.a
-          rm -f "$CLANG_PREFIX/x86_64-w64-mingw32/lib/libz.dll.a"
+          # zlib CMake 的 ZLIB_COMPAT 选项只影响共享库名，不影响静态库名 libzlibstatic.a
+          # 手动复制为 libz.a，使 DexKit 的 -lz 链接能找到标准命名的静态库
+          cp "$CLANG_PREFIX/x86_64-w64-mingw32/lib/libzlibstatic.a" \
+             "$CLANG_PREFIX/x86_64-w64-mingw32/lib/libz.a"
+          # 删除所有动态导入库，强制链接器使用静态 libz.a
+          rm -f "$CLANG_PREFIX/x86_64-w64-mingw32/lib/libz.dll.a" \
+                "$CLANG_PREFIX/x86_64-w64-mingw32/lib/libzlib.dll.a"
           echo "=== 验证 libz.a 已安装 ==="
           ls -la "$CLANG_PREFIX/x86_64-w64-mingw32/lib/libz.a"
 
