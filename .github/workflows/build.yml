@@ -3,17 +3,21 @@ name: Build and Release
 on:
   push:
     branches: [main, master]
-    tags: ['v*']
   schedule:
-    # 每周一 UTC 00:00 自动构建，跟进上游 DexKit
-    - cron: '0 0 * * 1'
+    # 每 6 小时检查一次上游 DexKit 是否有新 release（UTC 00:00 / 06:00 / 12:00 / 18:00）
+    - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       upstream_ref:
-        description: 'DexKit upstream ref (branch/tag/commit)'
+        description: 'DexKit upstream ref (branch/tag/commit). 留空则使用上游最新 release tag'
         required: false
         default: ''
         type: string
+      force_release:
+        description: '强制发布 release（即使已存在或上游无新版本）'
+        required: false
+        default: false
+        type: boolean
 
 # 避免并发构建互相覆盖产物
 concurrency:
@@ -21,8 +25,137 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check-upstream:
+    name: Check Upstream Release
+    runs-on: ubuntu-latest
+    outputs:
+      upstream_tag: ${{ steps.detect.outputs.upstream_tag }}
+      upstream_version: ${{ steps.detect.outputs.upstream_version }}
+      upstream_name: ${{ steps.detect.outputs.upstream_name }}
+      our_tag: ${{ steps.detect.outputs.our_tag }}
+      should_build: ${{ steps.decide.outputs.should_build }}
+      should_release: ${{ steps.decide.outputs.should_release }}
+    steps:
+      - name: Checkout dexkit-mcp
+        uses: actions/checkout@v4
+
+      - name: Detect upstream latest release
+        id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # 通过 GitHub API 获取上游 DexKit 最新 release
+          # 注意：上游使用 bare version tag（如 "2.2.0"，无 v 前缀），但 API 仍会返回 tag_name 字段
+          UPSTREAM_API="https://api.github.com/repos/LuckyPray/DexKit/releases/latest"
+          echo "Fetching $UPSTREAM_API"
+          curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+               -H "Accept: application/vnd.github+json" \
+               "$UPSTREAM_API" > upstream_release.json
+
+          UPSTREAM_TAG=$(jq -r '.tag_name' upstream_release.json)
+          UPSTREAM_NAME=$(jq -r '.name // .tag_name' upstream_release.json)
+          UPSTREAM_NOTES=$(jq -r '.body // ""' upstream_release.json)
+
+          if [ -z "$UPSTREAM_TAG" ] || [ "$UPSTREAM_TAG" = "null" ]; then
+            echo "::error::Failed to fetch upstream release"
+            cat upstream_release.json
+            exit 1
+          fi
+
+          # 计算上游纯版本号（去掉可能存在的 v 前缀，如 v2.2.0 → 2.2.0）
+          UPSTREAM_VERSION="${UPSTREAM_TAG#v}"
+
+          # 我们的 tag 始终带 v 前缀，便于 GitHub Actions 触发和识别
+          OUR_TAG="v${UPSTREAM_VERSION}"
+
+          echo "upstream_tag=$UPSTREAM_TAG" >> $GITHUB_OUTPUT
+          echo "upstream_version=$UPSTREAM_VERSION" >> $GITHUB_OUTPUT
+          echo "upstream_name=$UPSTREAM_NAME" >> $GITHUB_OUTPUT
+          echo "our_tag=$OUR_TAG" >> $GITHUB_OUTPUT
+
+          # 保存上游 release notes 到文件，供 release job 组合使用
+          mkdir -p upstream-info
+          echo "$UPSTREAM_NOTES" > upstream-info/upstream_notes.md
+          cp upstream_release.json upstream-info/
+
+          echo "=== 检测结果 ==="
+          echo "Upstream tag:  $UPSTREAM_TAG"
+          echo "Upstream ver:  $UPSTREAM_VERSION"
+          echo "Upstream name: $UPSTREAM_NAME"
+          echo "Our tag:       $OUR_TAG"
+
+      - name: Check if our release already exists
+        id: exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          OUR_TAG="${{ steps.detect.outputs.our_tag }}"
+          # gh release view 失败（非零退出）表示 release 不存在
+          if gh release view "$OUR_TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Our release $OUR_TAG already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Our release $OUR_TAG does not exist yet"
+          fi
+
+      - name: Decide build & release
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          FORCE: ${{ github.event.inputs.force_release }}
+          EXISTS: ${{ steps.exists.outputs.exists }}
+        run: |
+          set -euo pipefail
+          # 决策矩阵：
+          # ┌─────────────────────┬──────────────┬────────────────────┐
+          # │ event              │ should_build │ should_release      │
+          # ├─────────────────────┼──────────────┼────────────────────┤
+          # │ push               │ true         │ false（仅测试构建）│
+          # │ schedule           │ true         │ !exists（仅新版本）│
+          # │ workflow_dispatch  │ true         │ force OR !exists    │
+          # └─────────────────────┴──────────────┴────────────────────┘
+          SHOULD_BUILD="true"
+          SHOULD_RELEASE="false"
+
+          case "$EVENT" in
+            push)
+              SHOULD_RELEASE="false"
+              ;;
+            schedule)
+              if [ "$EXISTS" = "false" ]; then
+                SHOULD_RELEASE="true"
+              fi
+              ;;
+            workflow_dispatch)
+              if [ "$FORCE" = "true" ] || [ "$EXISTS" = "false" ]; then
+                SHOULD_RELEASE="true"
+              fi
+              ;;
+          esac
+
+          echo "should_build=$SHOULD_BUILD" >> $GITHUB_OUTPUT
+          echo "should_release=$SHOULD_RELEASE" >> $GITHUB_OUTPUT
+          echo "=== 决策结果 ==="
+          echo "Event:          $EVENT"
+          echo "Force release:  $FORCE"
+          echo "Release exists: $EXISTS"
+          echo "Should build:   $SHOULD_BUILD"
+          echo "Should release: $SHOULD_RELEASE"
+
+      - name: Upload upstream release info
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-release-info
+          path: upstream-info/
+          retention-days: 7
+
   build:
     name: Build (${{ matrix.platform-tag }})
+    needs: check-upstream
+    if: needs.check-upstream.outputs.should_build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -46,7 +179,8 @@ jobs:
           repository: LuckyPray/DexKit
           path: DexKit
           submodules: false
-          ref: ${{ github.event.inputs.upstream_ref || '' }}
+          # workflow_dispatch 且显式指定 upstream_ref 时优先使用，否则使用 check-upstream 检测到的上游 release tag
+          ref: ${{ github.event.inputs.upstream_ref || needs.check-upstream.outputs.upstream_tag }}
 
       - name: Copy mcp-server into DexKit
         shell: bash
@@ -121,6 +255,8 @@ jobs:
         shell: bash
         env:
           NATIVE_PLATFORM_TAG: ${{ matrix.platform-tag }}
+          # 注入上游版本号到 Gradle 构建（覆盖 build.gradle.kts 中的默认 0.1.0）
+          JAR_VERSION: ${{ needs.check-upstream.outputs.upstream_version }}
         run: |
           chmod +x ./gradlew
           ./gradlew shadowJar --no-daemon --stacktrace
@@ -147,9 +283,12 @@ jobs:
       - name: Rename jar with platform tag
         shell: bash
         working-directory: DexKit/mcp-server/build/libs
+        env:
+          JAR_VERSION: ${{ needs.check-upstream.outputs.upstream_version }}
         run: |
-          mv dexkit-mcp-server-0.1.0.jar \
-             dexkit-mcp-server-0.1.0-${{ matrix.platform-tag }}.jar
+          # 动态版本号重命名（版本号从 check-upstream 注入，如 2.2.0；fallback 0.1.0）
+          mv "dexkit-mcp-server-${JAR_VERSION}.jar" \
+             "dexkit-mcp-server-${JAR_VERSION}-${{ matrix.platform-tag }}.jar"
           ls -lh
 
       - name: Upload jar artifact
@@ -162,9 +301,9 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: build
+    needs: [check-upstream, build]
+    if: needs.check-upstream.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:
@@ -175,16 +314,78 @@ jobs:
           pattern: dexkit-mcp-server-*
           merge-multiple: false
 
+      - name: Download upstream release info
+        uses: actions/download-artifact@v4
+        with:
+          name: upstream-release-info
+          path: upstream-info
+
       - name: Flatten jar files
         run: |
           mkdir -p release
           find jars -name "*.jar" -exec cp {} release/ \;
           ls -lh release/
 
+      - name: Compose release notes
+        env:
+          UPSTREAM_VERSION: ${{ needs.check-upstream.outputs.upstream_version }}
+          UPSTREAM_TAG: ${{ needs.check-upstream.outputs.upstream_tag }}
+          UPSTREAM_NAME: ${{ needs.check-upstream.outputs.upstream_name }}
+        run: |
+          set -euo pipefail
+          {
+            echo "# DexKit MCP Server ${UPSTREAM_VERSION}"
+            echo ""
+            echo "> 镜像上游 [DexKit ${UPSTREAM_TAG}](https://github.com/LuckyPray/DexKit/releases/tag/${UPSTREAM_TAG}) 自动构建。"
+            echo "> 本仓库只负责 MCP 服务端封装与多平台 native 库打包，所有 DexKit 功能特性由上游决定。"
+            echo ""
+            echo "## 下载"
+            echo ""
+            echo "| 平台 | 文件 |"
+            echo "|------|------|"
+            echo "| Windows x86_64 | \`dexkit-mcp-server-${UPSTREAM_VERSION}-windows-x86_64.jar\` |"
+            echo "| Linux x86_64   | \`dexkit-mcp-server-${UPSTREAM_VERSION}-linux-x86_64.jar\`   |"
+            echo "| Linux arm64    | \`dexkit-mcp-server-${UPSTREAM_VERSION}-linux-arm64.jar\`    |"
+            echo ""
+            echo "## 快速开始"
+            echo ""
+            echo "选择对应平台的 jar，配置到 MCP 客户端的 \`mcp.json\`："
+            echo ""
+            echo "\`\`\`json"
+            echo "{"
+            echo "  \"mcpServers\": {"
+            echo "    \"dexkit\": {"
+            echo "      \"command\": \"java\","
+            echo "      \"args\": [\"-jar\", \"/path/to/dexkit-mcp-server-${UPSTREAM_VERSION}-<platform>.jar\"],"
+            echo "      \"env\": {}"
+            echo "    }"
+            echo "  }"
+            echo "}"
+            echo "\`\`\`"
+            echo ""
+            echo "## 构建说明"
+            echo ""
+            echo "- 三平台并行构建：Windows x86_64 / Linux x86_64 / Linux arm64"
+            echo "- Windows 使用 LLVM-MinGW 交叉编译工具链 + 静态 zlib 链接"
+            echo "- Linux 使用系统 cmake + ninja + zlib1g-dev"
+            echo "- native 库打包在 jar 的 \`/native/<os>-<arch>/\` 路径，运行时由 NativeLoader 释放到临时目录加载"
+            echo ""
+            echo "---"
+            echo ""
+            echo "## 上游 DexKit ${UPSTREAM_TAG} 发布说明"
+            echo ""
+            cat upstream-info/upstream_notes.md
+          } > release_notes.md
+
+          echo "=== 生成的 release notes 预览（前 80 行）==="
+          head -80 release_notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.check-upstream.outputs.our_tag }}
+          name: ${{ needs.check-upstream.outputs.upstream_name }}
           files: release/*.jar
-          generate_release_notes: true
+          body_path: release_notes.md
           draft: false
-          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
+          prerelease: ${{ contains(needs.check-upstream.outputs.upstream_tag, '-rc') || contains(needs.check-upstream.outputs.upstream_tag, '-beta') }}
